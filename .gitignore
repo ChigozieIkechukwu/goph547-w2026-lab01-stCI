@@ -63,3 +63,5 @@ desktop.ini
 # Directories
 figures/
 outputs/
+
+!anomaly_data.mat
