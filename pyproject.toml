@@ -1,0 +1,27 @@
+﻿[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "goph547lab01"
+version = "1.0.0"
+authors = [
+    {name = "ChigozieIkechukwu", email = "ikechukwuchigoziechukwuemeka@gmail.com"},
+]
+description = "GOPH 547 Lab 1: Gravity Forward Modelling"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0",
+    "scipy>=1.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ChigozieIkechukwu/goph547-w2026-lab01"

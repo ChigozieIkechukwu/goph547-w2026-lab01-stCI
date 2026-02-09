@@ -1,0 +1,73 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Output files - DO NOT include in git
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.mat
+*.npy
+*.npz
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints*
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.cache
+
+# Project specific - exclude all output directories
+outputs/
+figures/
+notebooks/.ipynb_checkpoints
+docs/_build/
+
+# But keep these directories (empty them are OK)
+!data/
+!examples/
+!notebooks/
+!docs/
