@@ -86,6 +86,7 @@ def create_contour_plots(grid_spacing):
     # Save the figure
     output_file = f'single_mass_grid_{grid_spacing:.1f}m.png'
     plt.savefig(output_file, dpi=150)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     print(f"Saved plot: {output_file}")
     
     plt.show()
