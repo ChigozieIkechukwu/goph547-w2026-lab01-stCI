@@ -68,6 +68,7 @@ def create_contour_plots(grid_spacing):
         ax1.set_xlabel('x (m)')
         ax1.set_ylabel('y (m)')
         ax1.set_aspect('equal')
+   
         plt.colorbar(contour1, ax=ax1, label='Potential (m²/s²)')
         
         # Plot gravity effect
@@ -81,12 +82,12 @@ def create_contour_plots(grid_spacing):
         ax2.set_aspect('equal')
         plt.colorbar(contour2, ax=ax2, label='g_z (m/s²)')
     
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     
     # Save the figure
     output_file = f'single_mass_grid_{grid_spacing:.1f}m.png'
     plt.savefig(output_file, dpi=150)
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    #plt.tight_layout(rect=[0, 0, 1, 0.95])
     print(f"Saved plot: {output_file}")
     
     plt.show()
