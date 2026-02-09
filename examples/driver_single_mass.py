@@ -13,7 +13,7 @@ def create_contour_plots(grid_spacing):
     
     # Mass anomaly parameters
     m = 1.0e7  # 10 million kg
-    xm = [0, 0, -10000]  # Center at (0, 0, -10 km) = (0, 0, -10000 m)
+    xm = [0, 0, -10]  # Center at (0, 0, -10 km) = (0, 0, -10 m)
     
     # Grid parameters
     x_min, x_max = -100, 100  # meters
