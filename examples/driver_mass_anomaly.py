@@ -1,19 +1,20 @@
+# examples/driver_mass_anomaly.py
 """
-FAST + ACCURATE Distributed Forward Modeling 
+Optimized distributed mass anomaly driver.
 
-What this version fixes / adds:
-- Extracts a modeling subregion  and overlays it on mean-density plots
-- Computes distributed forward modeling (gz AND potential U) as an exact point-mass summation
-- Uses chunked NumPy vectorization (fast) instead of Python loops over stations
-- Caches survey results to anomaly_survey_data.mat (generate if missing, load if present)
-- Computes dg/dz and d2g/dz2 (Laplace relation) and saves derivative plots
+Key features:
+- Uses the same physics convention as goph547lab01.gravity.gravity_effect_point:
+  gz = G*m*(zobs - zs)/r^3 with G=6.674e-11
+- Fast distributed forward modeling via chunked NumPy vectorization
+- Cache/load survey data (anomaly_survey_data.mat)
+- Optionally skip regenerating plots if they already exist
+- Computes dg/dz and d2g/dz2 (Laplace relation)
 
-Outputs:
+Outputs (in examples/):
 - anomaly_mean_density.png
 - anomaly_survey_gz.png
 - anomaly_survey_derivatives.png
-- anomaly_survey_data.mat (cache)
-
+- anomaly_survey_data.mat
 """
 
 import os
@@ -22,10 +23,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat, savemat
 
-# Add src directory to Python path (keep your original approach)
+# Add src directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-from goph547lab01.gravity import gravity_effect_point, gravity_potential_point  # noqa: F401
 
 
 # -------------------------------------------------
@@ -50,10 +49,7 @@ def load_anomaly_data():
 
 
 def get_cache_path(script_dir):
-    """Prefer writing cache into examples/ if it exists; otherwise script dir."""
-    examples_dir = os.path.join(script_dir, "examples")
-    if os.path.isdir(examples_dir):
-        return os.path.join(examples_dir, "anomaly_survey_data.mat")
+    """Cache stored in examples/."""
     return os.path.join(script_dir, "anomaly_survey_data.mat")
 
 
@@ -84,7 +80,7 @@ def compute_basic_statistics(xm, ym, zm, rho, cell_size=2.0):
 
 def extract_subregion(mm, xm, ym, zm, kx_min=40, kx_max=60, ky_min=44, ky_max=56, kz_min=7, kz_max=13):
     """
-    Extract modeling subregion
+    Extract modeling subregion as in Code 2.
 
     Assumes indexing is [ky, kx, kz]. If not, adapt slicing.
     """
@@ -116,7 +112,7 @@ def plot_mean_density_with_box(xm, ym, zm, rho, stats, bounds, outpath):
     ky_min, ky_max = bounds["ky_min"], bounds["ky_max"]
     kz_min, kz_max = bounds["kz_min"], bounds["kz_max"]
 
-    fig = plt.figure(figsize=(8, 9))
+    plt.figure(figsize=(8, 9))
 
     def plot_slice(pos, X, Y, Zslice, xlabel, ylabel, title, x_mark, y_mark, box_coords, xlim, ylim):
         ax = plt.subplot(3, 1, pos)
@@ -198,35 +194,34 @@ def plot_mean_density_with_box(xm, ym, zm, rho, stats, bounds, outpath):
 
 
 # -------------------------------------------------
-# Fast Distributed Forward Modeling (chunked vectorization)
+# Fast Distributed Forward Modeling (Course-consistent physics)
 # -------------------------------------------------
-def forward_model_distributed_fast(X, Y, zp, mm_sub, xm_sub, ym_sub, zm_sub, chunk=5000, eps=0.0):
+def forward_model_distributed_fast(X, Y, zp, mm_sub, xm_sub, ym_sub, zm_sub, chunk=20000, eps=0.0):
     """
     Exact summation over point masses accelerated via chunked vectorization.
 
-    Returns:
-      g_5: (ny,nx,nz)  vertical gravity effect
-      U_5: (ny,nx,nz)  gravitational potential
+    Physics matches goph547lab01.gravity.gravity_effect_point:
+      gz = G*m*(zobs - zs)/r^3 with G=6.674e-11
+    and potential:
+      U = G*m/r
     """
-    G = 6.67430e-11
+    G = 6.674e-11  # match package default
 
     ny, nx = X.shape
     nz = len(zp)
     g_5 = np.zeros((ny, nx, nz), dtype=np.float64)
     U_5 = np.zeros((ny, nx, nz), dtype=np.float64)
 
-    # Flatten station coordinates once
     Xf = X.ravel()
     Yf = Y.ravel()
     ns = Xf.size
 
-    # Optional: remove zero/negative masses (if any)
+    # Filter out zero masses to save work
     keep = mm_sub != 0.0
     mm_sub = mm_sub[keep]
     xm_sub = xm_sub[keep]
     ym_sub = ym_sub[keep]
     zm_sub = zm_sub[keep]
-
     nm = mm_sub.size
 
     for k, zobs in enumerate(zp):
@@ -236,7 +231,7 @@ def forward_model_distributed_fast(X, Y, zp, mm_sub, xm_sub, ym_sub, zm_sub, chu
         for s in range(0, nm, chunk):
             e = min(s + chunk, nm)
 
-            m = mm_sub[s:e][:, None]  # (c,1)
+            m = mm_sub[s:e][:, None]
             xs = xm_sub[s:e][:, None]
             ys = ym_sub[s:e][:, None]
             zs = zm_sub[s:e][:, None]
@@ -251,10 +246,7 @@ def forward_model_distributed_fast(X, Y, zp, mm_sub, xm_sub, ym_sub, zm_sub, chu
             inv_r = 1.0 / r
             inv_r3 = 1.0 / (r2 * r)
 
-            # Potential: U = G*m/r
             U_k += np.sum(G * m * inv_r, axis=0)
-
-            # Vertical component: gz = G*m*dz/r^3
             gz_k += np.sum(G * m * dz * inv_r3, axis=0)
 
         g_5[:, :, k] = gz_k.reshape(ny, nx)
@@ -263,9 +255,9 @@ def forward_model_distributed_fast(X, Y, zp, mm_sub, xm_sub, ym_sub, zm_sub, chu
     return g_5, U_5
 
 
-def generate_or_load_survey_fast(mm_sub, xm_sub, ym_sub, zm_sub, cache_file, chunk=5000):
+def generate_or_load_survey_fast(mm_sub, xm_sub, ym_sub, zm_sub, cache_file, chunk=20000, force_recompute=False):
     """Load cached survey if present; otherwise compute fast distributed survey and cache."""
-    if os.path.exists(cache_file):
+    if (not force_recompute) and os.path.exists(cache_file):
         survey = loadmat(cache_file)
         x_5 = survey["x_5"]
         y_5 = survey["y_5"]
@@ -275,9 +267,8 @@ def generate_or_load_survey_fast(mm_sub, xm_sub, ym_sub, zm_sub, cache_file, chu
         print(f"✓ Loaded cached survey data: {cache_file}")
         return x_5, y_5, zp, g_5, U_5
 
-    print("Survey cache not found. Running FAST distributed forward modeling...")
+    print("Survey cache not found or recompute forced. Running FAST distributed forward modeling...")
 
-    # 5 m grid, 41x41 points over [-100,100]
     x_5, y_5 = np.meshgrid(
         np.linspace(-100.0, 100.0, 41),
         np.linspace(-100.0, 100.0, 41),
@@ -295,11 +286,7 @@ def generate_or_load_survey_fast(mm_sub, xm_sub, ym_sub, zm_sub, cache_file, chu
 # Derivatives
 # -------------------------------------------------
 def compute_derivatives(x_5, y_5, zp, g_5):
-    """
-    dg/dz at z=0 and z=100 via vertical finite differences
-    d2g/dz2 at z=0 and z=100 via Laplace relation:
-      d2g/dz2 = -(d2g/dx2 + d2g/dy2)
-    """
+    """Compute dg/dz and d2g/dz2 using Laplace relation."""
     dx = float(x_5[0, 1] - x_5[0, 0])
     dy = float(y_5[1, 0] - y_5[0, 0])
 
@@ -318,7 +305,7 @@ def compute_derivatives(x_5, y_5, zp, g_5):
 
 
 # -------------------------------------------------
-# Plotting: gz + derivatives
+# Plotting
 # -------------------------------------------------
 def plot_gravity_maps(x_5, y_5, zp, g_5, outpath):
     """2x2 contour plots of gz at z = 0,1,100,110 m."""
@@ -328,7 +315,7 @@ def plot_gravity_maps(x_5, y_5, zp, g_5, outpath):
         f"g_z at z = {zp[2]:.0f} m",
         f"g_z at z = {zp[3]:.0f} m",
     ]
-    fig = plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(10, 10))
     for idx in range(4):
         ax = plt.subplot(2, 2, idx + 1)
         cf = ax.contourf(x_5, y_5, g_5[:, :, idx], levels=50, cmap="plasma")
@@ -347,7 +334,7 @@ def plot_gravity_maps(x_5, y_5, zp, g_5, outpath):
 
 def plot_derivative_maps(x_5, y_5, dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100, outpath):
     """2x2 derivative plots."""
-    fig = plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(10, 10))
 
     def levels_from(Z, n=50):
         lo, hi = np.percentile(Z, 2), np.percentile(Z, 98)
@@ -370,7 +357,6 @@ def plot_derivative_maps(x_5, y_5, dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100, outpa
 
     quick_plot(1, x_5, y_5, dgdz_0, levels_from(dgdz_0), r"$\partial g_z/\partial z$ [s$^{-2}$]", "z = 0 m")
     quick_plot(3, x_5, y_5, dgdz_100, levels_from(dgdz_100), r"$\partial g_z/\partial z$ [s$^{-2}$]", "z = 100 m")
-
     quick_plot(
         2,
         x_5[1:-1, 1:-1],
@@ -400,6 +386,12 @@ def plot_derivative_maps(x_5, y_5, dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100, outpa
 # Main
 # -------------------------------------------------
 def main():
+    # ---- user-tunable controls ----
+    FORCE_RECOMPUTE_SURVEY = False  # True: ignore cache and recompute survey
+    FORCE_REMAKE_PLOTS = False      # True: overwrite PNGs even if they exist
+    CHUNK = 20000                   # raise if you have RAM (e.g., 50000); lower if memory issues
+    # -------------------------------
+
     print("=" * 70)
     print("GOPH 547 LAB 1 - PART C: DISTRIBUTED MASS ANOMALY")
     print("=" * 70)
@@ -424,7 +416,7 @@ def main():
     print(f"Mean density: {stats['rho_mean']:.3f} kg/m³")
     print(f"Grid shape: {stats['shape']} (N={stats['n_cells']:,})")
 
-    # 3) Extract modeling subregion (same indices as Code 2)
+    # 3) Extract modeling subregion
     mm_sub, xm_sub, ym_sub, zm_sub, bounds = extract_subregion(mm, xm, ym, zm)
     print("\n" + "=" * 60)
     print("MODELING SUBREGION")
@@ -432,32 +424,35 @@ def main():
     print(f"Subregion mass points: {mm_sub.size:,}")
     print(f"Index bounds: {bounds}")
 
-    # 4) Plot mean density with subregion box
+    # Output paths (in examples/)
     mean_density_out = os.path.join(script_dir, "anomaly_mean_density.png")
-    plot_mean_density_with_box(xm, ym, zm, rho, stats, bounds, mean_density_out)
-
-    # 5) Fast distributed survey + cache
+    gz_out = os.path.join(script_dir, "anomaly_survey_gz.png")
+    deriv_out = os.path.join(script_dir, "anomaly_survey_derivatives.png")
     cache_file = get_cache_path(script_dir)
 
-    # Chunk size tuning:
-    # - If you have plenty of RAM, try 20000–50000 for speed
-    # - If you see memory issues, reduce to 2000–10000
-    chunk = 20000
+    # 4) Mean density plot (optional skip)
+    if FORCE_REMAKE_PLOTS or (not os.path.exists(mean_density_out)):
+        plot_mean_density_with_box(xm, ym, zm, rho, stats, bounds, mean_density_out)
+    else:
+        print(f"✓ Mean density plot exists: {mean_density_out}")
 
+    # 5) Survey (cache)
     x_5, y_5, zp, g_5, U_5 = generate_or_load_survey_fast(
-        mm_sub, xm_sub, ym_sub, zm_sub, cache_file, chunk=chunk
+        mm_sub, xm_sub, ym_sub, zm_sub, cache_file, chunk=CHUNK, force_recompute=FORCE_RECOMPUTE_SURVEY
     )
 
-    # 6) Plot gz survey maps
-    gz_out = os.path.join(script_dir, "anomaly_survey_gz.png")
-    plot_gravity_maps(x_5, y_5, zp, g_5, gz_out)
+    # 6) Gravity maps (optional skip)
+    if FORCE_REMAKE_PLOTS or (not os.path.exists(gz_out)):
+        plot_gravity_maps(x_5, y_5, zp, g_5, gz_out)
+    else:
+        print(f"✓ Gravity maps exist: {gz_out}")
 
-    # 7) Derivatives
-    dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100 = compute_derivatives(x_5, y_5, zp, g_5)
-
-    # 8) Plot derivatives
-    deriv_out = os.path.join(script_dir, "anomaly_survey_derivatives.png")
-    plot_derivative_maps(x_5, y_5, dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100, deriv_out)
+    # 7) Derivatives + plot (optional skip)
+    if FORCE_REMAKE_PLOTS or (not os.path.exists(deriv_out)):
+        dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100 = compute_derivatives(x_5, y_5, zp, g_5)
+        plot_derivative_maps(x_5, y_5, dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100, deriv_out)
+    else:
+        print(f"✓ Derivative maps exist: {deriv_out}")
 
     print("\n" + "=" * 70)
     print("DONE")
