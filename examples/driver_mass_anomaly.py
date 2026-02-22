@@ -1,6 +1,6 @@
 # examples/driver_mass_anomaly.py
 """
-Optimized distributed mass anomaly driver.
+Optimized distributed mass anomaly driver .
 
 Key features:
 - Uses the same physics convention as goph547lab01.gravity.gravity_effect_point:
@@ -12,6 +12,7 @@ Key features:
 
 Outputs (in examples/):
 - anomaly_mean_density.png
+- anomaly_survey_U.png
 - anomaly_survey_gz.png
 - anomaly_survey_derivatives.png
 - anomaly_survey_data.mat
@@ -25,6 +26,8 @@ from scipy.io import loadmat, savemat
 
 # Add src directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+from goph547lab01.gravity import gravity_effect_point, gravity_potential_point  # noqa: E402
 
 
 # -------------------------------------------------
@@ -49,7 +52,7 @@ def load_anomaly_data():
 
 
 def get_cache_path(script_dir):
-    """Cache stored in examples/."""
+    """Cache stored in examples/ (script directory)."""
     return os.path.join(script_dir, "anomaly_survey_data.mat")
 
 
@@ -78,16 +81,23 @@ def compute_basic_statistics(xm, ym, zm, rho, cell_size=2.0):
     return stats, mm
 
 
-def extract_subregion(mm, xm, ym, zm, kx_min=40, kx_max=60, ky_min=44, ky_max=56, kz_min=7, kz_max=13):
+def extract_subregion(mm, xm, ym, zm, rho, kx_min=40, kx_max=60, ky_min=44, ky_max=56, kz_min=7, kz_max=13):
     """
-    Extract modeling subregion as in Code 2.
+    Extract modeling subregion (index-based, Code-2 style).
 
     Assumes indexing is [ky, kx, kz]. If not, adapt slicing.
+    Returns:
+      flattened mass/coords for forward modeling, bounds, and rho_sub (3D) for Step-3 stats.
     """
-    mm_sub = mm[ky_min : ky_max + 1, kx_min : kx_max + 1, kz_min : kz_max + 1].flatten()
-    xm_sub = xm[ky_min : ky_max + 1, kx_min : kx_max + 1, kz_min : kz_max + 1].flatten()
-    ym_sub = ym[ky_min : ky_max + 1, kx_min : kx_max + 1, kz_min : kz_max + 1].flatten()
-    zm_sub = zm[ky_min : ky_max + 1, kx_min : kx_max + 1, kz_min : kz_max + 1].flatten()
+    sl_y = slice(ky_min, ky_max + 1)
+    sl_x = slice(kx_min, kx_max + 1)
+    sl_z = slice(kz_min, kz_max + 1)
+
+    mm_sub = mm[sl_y, sl_x, sl_z].reshape(-1)
+    xm_sub = xm[sl_y, sl_x, sl_z].reshape(-1)
+    ym_sub = ym[sl_y, sl_x, sl_z].reshape(-1)
+    zm_sub = zm[sl_y, sl_x, sl_z].reshape(-1)
+    rho_sub = rho[sl_y, sl_x, sl_z]
 
     bounds = dict(
         kx_min=kx_min,
@@ -97,14 +107,50 @@ def extract_subregion(mm, xm, ym, zm, kx_min=40, kx_max=60, ky_min=44, ky_max=56
         kz_min=kz_min,
         kz_max=kz_max,
     )
-    return mm_sub, xm_sub, ym_sub, zm_sub, bounds
+    return mm_sub, xm_sub, ym_sub, zm_sub, rho_sub, bounds
+
+
+def report_subregion_statistics(xm, ym, zm, rho_sub, bounds, rho_global_mean):
+    """Step-3 style report: coordinate ranges + mean density + comparison vs global mean."""
+    ky_min, ky_max = bounds["ky_min"], bounds["ky_max"]
+    kx_min, kx_max = bounds["kx_min"], bounds["kx_max"]
+    kz_min, kz_max = bounds["kz_min"], bounds["kz_max"]
+
+    # Coordinates in subregion (use the same slices)
+    sl_y = slice(ky_min, ky_max + 1)
+    sl_x = slice(kx_min, kx_max + 1)
+    sl_z = slice(kz_min, kz_max + 1)
+
+    x_sub = xm[sl_y, sl_x, sl_z]
+    y_sub = ym[sl_y, sl_x, sl_z]
+    z_sub = zm[sl_y, sl_x, sl_z]
+
+    x_min, x_max = float(np.min(x_sub)), float(np.max(x_sub))
+    y_min, y_max = float(np.min(y_sub)), float(np.max(y_sub))
+    z_min, z_max = float(np.min(z_sub)), float(np.max(z_sub))
+
+    rho_mean_region = float(np.mean(rho_sub))
+    ratio = rho_mean_region / rho_global_mean if rho_global_mean != 0.0 else np.nan
+    pct = (rho_mean_region - rho_global_mean) / rho_global_mean * 100.0 if rho_global_mean != 0.0 else np.nan
+
+    print("\n" + "=" * 60)
+    print("SUBREGION (Step 3) STATISTICS")
+    print("=" * 60)
+    print("Chosen as a non-negligible density region (index-defined subvolume).")
+    print(f"X range: {x_min:.2f} to {x_max:.2f} m")
+    print(f"Y range: {y_min:.2f} to {y_max:.2f} m")
+    print(f"Z range: {z_min:.2f} to {z_max:.2f} m")
+    print(f"Mean density in subregion: {rho_mean_region:.6f} kg/m³")
+    print(f"Global mean density:        {rho_global_mean:.6f} kg/m³")
+    print(f"Subregion / Global mean:    {ratio:.3f}×")
+    print(f"Percent difference:         {pct:.2f} %")
 
 
 # -------------------------------------------------
 # Plot Mean Density + Subregion Box
 # -------------------------------------------------
 def plot_mean_density_with_box(xm, ym, zm, rho, stats, bounds, outpath):
-    """3x1 mean density slices with barycenter marker and subregion box overlay."""
+    """3x1 mean density slices with barycenter marker (xk, markersize=3) and subregion box overlay."""
     xbar, ybar, zbar = stats["barycenter"]
     r_min, r_max = 0.0, 0.6
 
@@ -117,7 +163,8 @@ def plot_mean_density_with_box(xm, ym, zm, rho, stats, bounds, outpath):
     def plot_slice(pos, X, Y, Zslice, xlabel, ylabel, title, x_mark, y_mark, box_coords, xlim, ylim):
         ax = plt.subplot(3, 1, pos)
         cf = ax.contourf(X, Y, Zslice, cmap="viridis_r", levels=np.linspace(r_min, r_max, 200))
-        ax.plot(x_mark, y_mark, "xk", markersize=5)
+        # SPEC-LITERAL MARKER: "xk" and markersize=3
+        ax.plot(x_mark, y_mark, "xk", markersize=3)
         ax.plot(box_coords[0], box_coords[1], "--k")
         cbar = plt.colorbar(cf, ax=ax, ticks=np.linspace(r_min, r_max, 7))
         cbar.set_label(r"$\bar{\rho}$ [$kg/m^3$]")
@@ -200,10 +247,9 @@ def forward_model_distributed_fast(X, Y, zp, mm_sub, xm_sub, ym_sub, zm_sub, chu
     """
     Exact summation over point masses accelerated via chunked vectorization.
 
-    Physics matches goph547lab01.gravity.gravity_effect_point:
-      gz = G*m*(zobs - zs)/r^3 with G=6.674e-11
-    and potential:
-      U = G*m/r
+    Physics matches goph547lab01.gravity:
+      U  = G*m/r
+      gz = G*m*(zobs - zs)/r^3
     """
     G = 6.674e-11  # match package default
 
@@ -283,6 +329,60 @@ def generate_or_load_survey_fast(mm_sub, xm_sub, ym_sub, zm_sub, cache_file, chu
 
 
 # -------------------------------------------------
+# Consistency spot-check (optional)
+# -------------------------------------------------
+def spot_check_against_partA_functions(x_5, y_5, zp, mm_sub, xm_sub, ym_sub, zm_sub, n_check=10, seed=0):
+    """
+    Demonstrate equivalence between the vectorized summation used here and the
+    Part-A point formulas gravity_potential_point / gravity_effect_point.
+
+    This is NOT used in production loops (kept fast); it checks a handful of points only.
+    """
+    rng = np.random.default_rng(seed)
+
+    # Choose random station indices and random mass indices
+    ny, nx = x_5.shape
+    station_ids = rng.integers(0, ny * nx, size=n_check)
+    mass_ids = rng.integers(0, mm_sub.size, size=n_check)
+    z_ids = rng.integers(0, len(zp), size=n_check)
+
+    # Single-point check: compare summing via Part A functions vs vectorized formula for that point
+    max_abs_g = 0.0
+    max_abs_U = 0.0
+
+    for sid, zid in zip(station_ids, z_ids):
+        iy = int(sid // nx)
+        ix = int(sid % nx)
+        obs = np.array([x_5[iy, ix], y_5[iy, ix], float(zp[zid])], dtype=float)
+
+        # Part A style loop sum (only for a tiny sample)
+        g_loop = 0.0
+        U_loop = 0.0
+        for m, xs, ys, zs in zip(mm_sub, xm_sub, ym_sub, zm_sub):
+            src = np.array([xs, ys, zs], dtype=float)
+            U_loop += gravity_potential_point(obs, src, float(m))
+            g_loop += gravity_effect_point(obs, src, float(m))
+
+        # Vectorized single-point (same algebra used in forward model)
+        dx = obs[0] - xm_sub
+        dy = obs[1] - ym_sub
+        dz = obs[2] - zm_sub
+        r2 = dx * dx + dy * dy + dz * dz
+        r = np.sqrt(r2)
+        U_vec = np.sum(6.674e-11 * mm_sub / r)
+        g_vec = np.sum(6.674e-11 * mm_sub * dz / (r2 * r))
+
+        max_abs_g = max(max_abs_g, float(abs(g_loop - g_vec)))
+        max_abs_U = max(max_abs_U, float(abs(U_loop - U_vec)))
+
+    print("\n" + "=" * 60)
+    print("SPOT CHECK (equivalence to Part-A point functions)")
+    print("=" * 60)
+    print(f"Max |Δgz| over {n_check} random stations: {max_abs_g:.3e} m/s²")
+    print(f"Max |ΔU|  over {n_check} random stations: {max_abs_U:.3e} m²/s²")
+
+
+# -------------------------------------------------
 # Derivatives
 # -------------------------------------------------
 def compute_derivatives(x_5, y_5, zp, g_5):
@@ -330,6 +430,31 @@ def plot_gravity_maps(x_5, y_5, zp, g_5, outpath):
     plt.savefig(outpath, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"✓ Saved gravity maps: {outpath}")
+
+
+def plot_potential_maps(x_5, y_5, zp, U_5, outpath):
+    """2x2 contour plots of potential U at z = 0,1,100,110 m."""
+    titles = [
+        f"U at z = {zp[0]:.0f} m",
+        f"U at z = {zp[1]:.0f} m",
+        f"U at z = {zp[2]:.0f} m",
+        f"U at z = {zp[3]:.0f} m",
+    ]
+    plt.figure(figsize=(10, 10))
+    for idx in range(4):
+        ax = plt.subplot(2, 2, idx + 1)
+        cf = ax.contourf(x_5, y_5, U_5[:, :, idx], levels=50, cmap="viridis_r")
+        plt.colorbar(cf, ax=ax, label="U [m²/s²]")
+        ax.set_title(titles[idx])
+        ax.set_xlim(-100, 100)
+        ax.set_ylim(-100, 100)
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
+        ax.set_aspect("equal")
+    plt.tight_layout()
+    plt.savefig(outpath, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"✓ Saved potential maps: {outpath}")
 
 
 def plot_derivative_maps(x_5, y_5, dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100, outpath):
@@ -387,9 +512,10 @@ def plot_derivative_maps(x_5, y_5, dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100, outpa
 # -------------------------------------------------
 def main():
     # ---- user-tunable controls ----
-    FORCE_RECOMPUTE_SURVEY = False  # True: ignore cache and recompute survey
-    FORCE_REMAKE_PLOTS = False      # True: overwrite PNGs even if they exist
-    CHUNK = 20000                   # raise if you have RAM (e.g., 50000); lower if memory issues
+    FORCE_RECOMPUTE_SURVEY = False   # True: ignore cache and recompute survey
+    FORCE_REMAKE_PLOTS = False       # True: overwrite PNGs even if they exist
+    CHUNK = 20000                    # raise if you have RAM (e.g., 50000); lower if memory issues
+    RUN_SPOT_CHECK = True            # True: run a small equivalence check vs Part-A functions
     # -------------------------------
 
     print("=" * 70)
@@ -413,19 +539,22 @@ def main():
     print(f"Total mass: {stats['mtot']:.3e} kg")
     print(f"Barycenter: ({xbar:.2f}, {ybar:.2f}, {zbar:.2f}) m")
     print(f"Max density: {stats['rho_max']:.3f} kg/m³")
-    print(f"Mean density: {stats['rho_mean']:.3f} kg/m³")
+    print(f"Mean density: {stats['rho_mean']:.6f} kg/m³")
     print(f"Grid shape: {stats['shape']} (N={stats['n_cells']:,})")
 
-    # 3) Extract modeling subregion
-    mm_sub, xm_sub, ym_sub, zm_sub, bounds = extract_subregion(mm, xm, ym, zm)
+    # 3) Extract modeling subregion + Step-3 stats
+    mm_sub, xm_sub, ym_sub, zm_sub, rho_sub, bounds = extract_subregion(mm, xm, ym, zm, rho)
     print("\n" + "=" * 60)
     print("MODELING SUBREGION")
     print("=" * 60)
     print(f"Subregion mass points: {mm_sub.size:,}")
     print(f"Index bounds: {bounds}")
 
+    report_subregion_statistics(xm, ym, zm, rho_sub, bounds, rho_global_mean=stats["rho_mean"])
+
     # Output paths (in examples/)
     mean_density_out = os.path.join(script_dir, "anomaly_mean_density.png")
+    U_out = os.path.join(script_dir, "anomaly_survey_U.png")
     gz_out = os.path.join(script_dir, "anomaly_survey_gz.png")
     deriv_out = os.path.join(script_dir, "anomaly_survey_derivatives.png")
     cache_file = get_cache_path(script_dir)
@@ -441,13 +570,23 @@ def main():
         mm_sub, xm_sub, ym_sub, zm_sub, cache_file, chunk=CHUNK, force_recompute=FORCE_RECOMPUTE_SURVEY
     )
 
-    # 6) Gravity maps (optional skip)
+    # Optional equivalence proof (tiny sample)
+    if RUN_SPOT_CHECK:
+        spot_check_against_partA_functions(x_5, y_5, zp, mm_sub, xm_sub, ym_sub, zm_sub, n_check=5, seed=0)
+
+    # 6) Potential maps (optional skip)
+    if FORCE_REMAKE_PLOTS or (not os.path.exists(U_out)):
+        plot_potential_maps(x_5, y_5, zp, U_5, U_out)
+    else:
+        print(f"✓ Potential maps exist: {U_out}")
+
+    # 7) Gravity maps (optional skip)
     if FORCE_REMAKE_PLOTS or (not os.path.exists(gz_out)):
         plot_gravity_maps(x_5, y_5, zp, g_5, gz_out)
     else:
         print(f"✓ Gravity maps exist: {gz_out}")
 
-    # 7) Derivatives + plot (optional skip)
+    # 8) Derivatives + plot (optional skip)
     if FORCE_REMAKE_PLOTS or (not os.path.exists(deriv_out)):
         dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100 = compute_derivatives(x_5, y_5, zp, g_5)
         plot_derivative_maps(x_5, y_5, dgdz_0, dgdz_100, d2gdz2_0, d2gdz2_100, deriv_out)
@@ -459,6 +598,7 @@ def main():
     print("=" * 70)
     print("Generated outputs:")
     print(f"  - {mean_density_out}")
+    print(f"  - {U_out}")
     print(f"  - {gz_out}")
     print(f"  - {deriv_out}")
     print("Cached survey data:")
