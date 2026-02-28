@@ -92,8 +92,6 @@ def evaluate_anomaly_vectorized(xg, yg, zp, m, xm, eps=0.0):
       gz = G*m*(zobs - zs)/r^3
     If the gravity_effect_point returns something else, use evaluate_anomaly_point_loops.
     """
-    # Try to infer G consistently:
-    # We don't import G from the package, so we match the common value used in Code B.
     G = 6.674e-11
 
     ny, nx = xg.shape
@@ -104,26 +102,25 @@ def evaluate_anomaly_vectorized(xg, yg, zp, m, xm, eps=0.0):
 
     Xf = xg.ravel()[None, :]  # (1, ns)
     Yf = yg.ravel()[None, :]  # (1, ns)
-    ns = Xf.shape[1]
 
-    m = np.asarray(m, dtype=float)[:, None]    # (nm, 1)
+    m = np.asarray(m, dtype=float)[:, None]          # (nm, 1)
     xs = np.asarray(xm[:, 0], dtype=float)[:, None]  # (nm, 1)
     ys = np.asarray(xm[:, 1], dtype=float)[:, None]
     zs = np.asarray(xm[:, 2], dtype=float)[:, None]
 
-    dx = Xf - xs  # (nm, ns)
+    dx = Xf - xs
     dy = Yf - ys
 
     for k, zobs in enumerate(zp):
-        dz = (float(zobs) - zs)  # (nm, 1)
+        dz = (float(zobs) - zs)
         r2 = dx * dx + dy * dy + dz * dz + eps
         r = np.sqrt(r2)
 
         inv_r = 1.0 / r
         inv_r3 = 1.0 / (r2 * r)
 
-        U_k = np.sum(G * m * inv_r, axis=0)          # (ns,)
-        g_k = np.sum(G * m * dz * inv_r3, axis=0)    # (ns,)
+        U_k = np.sum(G * m * inv_r, axis=0)
+        g_k = np.sum(G * m * dz * inv_r3, axis=0)
 
         U[:, :, k] = U_k.reshape(ny, nx)
         g[:, :, k] = g_k.reshape(ny, nx)
@@ -132,7 +129,7 @@ def evaluate_anomaly_vectorized(xg, yg, zp, m, xm, eps=0.0):
 
 
 # -------------------------------------------------
-# Plotting 
+# Plotting
 # -------------------------------------------------
 def plot_anomaly(x, y, U, g, spacing, outfile):
     fig = plt.figure(figsize=(8, 8))
@@ -149,7 +146,7 @@ def plot_anomaly(x, y, U, g, spacing, outfile):
     for k, ztxt in enumerate(zlevels):
         # Potential
         axU = plt.subplot(3, 2, 2 * k + 1)
-        axU.contourf(
+        cfU = axU.contourf(
             x,
             y,
             U[:, :, k],
@@ -158,7 +155,10 @@ def plot_anomaly(x, y, U, g, spacing, outfile):
         )
         if spacing == 25.0:
             axU.plot(x, y, "xk", markersize=2)
-        plt.colorbar(ticks=np.linspace(Umin, Umax, 5)).set_label(r"U [$m^2/s^2$]")
+
+        plt.colorbar(cfU, ax=axU, ticks=np.linspace(Umin, Umax, 5)).set_label(
+            r"U [$m^2/s^2$]"
+        )
         axU.set_ylabel("y [m]")
         axU.text(
             -90,
@@ -170,7 +170,7 @@ def plot_anomaly(x, y, U, g, spacing, outfile):
 
         # Gravity
         axg = plt.subplot(3, 2, 2 * k + 2)
-        axg.contourf(
+        cfg = axg.contourf(
             x,
             y,
             g[:, :, k],
@@ -179,7 +179,10 @@ def plot_anomaly(x, y, U, g, spacing, outfile):
         )
         if spacing == 25.0:
             axg.plot(x, y, "xk", markersize=2)
-        plt.colorbar(ticks=np.linspace(gmin, gmax, 5)).set_label(r"g [$m/s^2$]")
+
+        plt.colorbar(cfg, ax=axg, ticks=np.linspace(gmin, gmax, 5)).set_label(
+            r"g [$m/s^2$]"
+        )
         axg.text(
             -90,
             70,
@@ -199,12 +202,9 @@ def plot_anomaly(x, y, U, g, spacing, outfile):
 
 
 # -------------------------------------------------
-# Main driver 
+# Main driver
 # -------------------------------------------------
 def main():
-    # Choose computation method:
-    # - "point": exactly matches Code A computation path (slow, but definitive)
-    # - "vectorized": faster exact summation; assumes g is gz per standard formula
     METHOD = "point"  # change to "vectorized" if desired
 
     m, xm = define_mass_anomaly()
